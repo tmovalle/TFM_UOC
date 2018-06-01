@@ -1,0 +1,114 @@
+
+# Análisis Expresión diferencial en hoja de yuca
+## author: Tatiana Ovalle
+
+# Acceso al repositorio de Bioconductor
+source("https://bioconductor.org/biocLite.R")
+biocLite()
+biocValid()
+
+# Paquetes utilizados 
+library(DESeq2)
+biocLite("tximport")
+library("readr")
+
+# Directorio de trabajo
+dir <- "D:/TATIANA 2018/UOC/TFM/Kallisto/kallisto_output_hoja/"
+
+# Listado de muestras y archivos de abundancias .tsv 
+samples <- read.table(file.path(dir,"muestras_hoja.txt"), header=TRUE)
+rownames(samples) <- samples$sample
+files <- file.path(dir, samples$sample, "abundance.tsv")
+names(files) <- samples$sample
+tx2gene <- read.delim(file.path(dir, "BetaHojamerged.txt"))
+txi <- tximport(files, "kallisto",tx2gene=tx2gene)
+
+# Importar los datos a DESeq2 utilizando tximport
+ddsTxi <- DESeqDataSetFromTximport(txi, colData = samples, design = ~ phenotype)
+ddsTxi
+
+# Pre-filtrado por número de lecturas/gen
+keep <- rowSums(counts(ddsTxi)) >= 10
+ddsTxi <- ddsTxi[keep,] 
+
+# Niveles de la variable factor phenotype
+ddsTxi$phenotype <- factor(ddsTxi$phenotype, levels = c("high","intermediate","low"))
+
+# Prueba de expresión diferencial utilizando la prueba de hipótesis LRT y el modelo reducido
+dds <- DESeq(ddsTxi,test="LRT", reduced=~1)
+res <- results(dds)
+summary(res)
+
+# Ordenando los datos por el valor de p-ajustado
+resOrdered <- res[order(res$padj),]
+resOrdered
+
+# Cantidad de genes con un valor de p ajustado menor a 0.1
+sum(res$padj < 0.1, na.rm=TRUE)
+
+# Cantidad de genes con un valor de p ajustado menor a 0.05
+sum(res$padj < 0.05, na.rm=TRUE)
+
+# Generando tabla de resultados
+write.csv(as.data.frame(resOrdered), file="Deseq2Leave.csv")
+
+# visualización de los resultados utilizando plots e histogramas
+
+plotMA(res, ylim=c(-10,10))
+plotCounts(dds, gene=which.min(res$padj), intgroup="phenotype")
+plotDispEsts( dds, ylim = c(1e-5, 1e1) )
+hist( res$pvalue, breaks=20, col="grey" )
+
+Transformación de los datos obtenidos 
+rld <- rlog(dds)
+head( assay(rld) )
+
+# Visualización de los datos transformados
+par( mfrow = c( 1, 2 ) )
+plot( log2( 1+counts(dds, normalized=TRUE)[, 1:2] ), col="#00000020", pch=20, cex=0.3 )
+plot( assay(rld)[, 1:2], col="#00000020", pch=20, cex=0.3 )
+sampleDists <- dist( t( assay(rld) ) )
+sampleDistMatrix <- as.matrix( sampleDists )
+rownames(sampleDistMatrix) <-  rld$sample
+colnames(sampleDistMatrix) <- rld$phenotype
+library( "gplots" )
+library( "RColorBrewer" )
+colours = colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+heatmap.2( sampleDistMatrix, trace="none", col=colours)
+ramp <- 1:3/3
+cols <- c(rgb(ramp, 0, 0),rgb(0, ramp, 0),rgb(0, 0, ramp))
+print( plotPCA( rld, intgroup = "phenotype"), col=cols ) 
+
+
+library( "genefilter" )
+topVarGenes <- head( order( rowVars( assay(rld) ), decreasing=TRUE ), 8439 )
+heatmap.2( assay(rld)[ topVarGenes, ], scale="row",
+trace="none", dendrogram="column", cexRow = 0.1, cexCol = 0.5,
+col = colorRampPalette( rev(brewer.pal(9, "RdBu")) )(255))
+
+# heatmap  
+library("pheatmap")
+select <- order(rowMeans(counts(dds,normalized=TRUE)),decreasing=TRUE)[1:8439]
+df <- as.data.frame(colData(dds)[,c("phenotype","sample")])
+pheatmap(assay(rld)[select,], cluster_rows=FALSE, show_rownames=FALSE,
+         cluster_cols=FALSE, annotation_col=df)
+
+# Reporte de resultados 
+biocLite("DEGreport")
+library(DEGreport)
+resreport <- degResults(dds = dds, name = "test", org = NULL,
+                        do_go = FALSE, group = "phenotype", xs="phenotype",  path_results = ".")
+
+write.csv(as.data.frame(resreport$table), file="degResults_Hoja.csv")
+
+# Agrupación de DEGs en cada uno de los niveles de la variable fenotipo
+library(DEGreport) 
+ma <- assay(rlog(dds))[row.names(resOrdered)[1:8439],]
+des <- data.frame(row.names=colnames(ma), group=as.factor(ddsTxi$phenotype))
+results8439 <- degPatterns(ma, des, minc = 30, summarize = "group", time = "group", col = "group", reduce = FALSE, cutoff = 0.7, scale = TRUE, plot = TRUE, fixy = NULL)
+
+# Listado de DEG por fenotipo utilizando la función degPatterns
+write.csv(as.data.frame(results8439$df), file="degpatterns_Hoja_ok.csv")
+
+
+
