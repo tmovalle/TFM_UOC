@@ -1,0 +1,109 @@
+# title: Análisis de expresión diferencial en Hoja y Raíz de yuca
+## author: Tatiana Ovalle
+
+# Acceso al repositorio de Bioconductor
+source("https://bioconductor.org/biocLite.R")
+biocLite()
+biocValid() 
+
+# Descarga de paquetes utilizados
+biocLite("DESeq2")
+biocLite("tximport")
+library("tximport")
+library("readr")
+library("DESeq2")
+
+# Directorio de trabajo
+dir <- "D:/TATIANA 2018/UOC/TFM/Kallisto/kallisto_output_hojaraiz_ok/"
+
+# Listado de muestras y archivos de abundancias .tsv 
+samples <- read.table(file.path(dir,"muestras.txt"), header=TRUE)
+rownames(samples) <- samples$sample
+files <- file.path(dir, samples$sample, "abundance.tsv")
+names(files) <- samples$sample
+tx2gene <- read.delim(file.path(dir, "betahojaraizmerged.txt"))
+txi_hr <- tximport(files, "kallisto",tx2gene=tx2gene)
+
+# Importar los datos a DESeq2 utilizando tximport
+ddsTxi_hr <- DESeqDataSetFromTximport(txi_hr, colData = samples, design = ~ Tissue+phenotype)
+ddsTxi_hr
+
+# Pre-filtrado por número de lecturas/gen
+keep_hr <- rowSums(counts(ddsTxi_hr)) >= 10
+
+# Niveles de la variable factor fenotipo y tejido
+ddsTxi_hr <- ddsTxi_hr[keep_hr,]
+ddsTxi_hr$phenotype <- factor(ddsTxi_hr$phenotype, levels = c("high","intermediate","low"))
+ddsTxi_hr$Tissue <- factor(ddsTxi_hr$Tissue, levels = c("Leave","Root"))
+
+# Prueba de expresión diferencial utilizando la prueba de hipótesis LRT y el modelo reducido
+dds_hr <- DESeq(ddsTxi_hr,test="LRT", reduced=~Tissue)
+res_hr <- results(dds_hr)
+
+
+# Ordenando los datos por el valor de p-ajustado
+resOrdered <- res_hr[order(res_hr$padj),]
+resOrdered
+
+# Cantidad de genes con un valor de p ajustado menor a 0.1
+sum(res_hr$padj < 0.05, na.rm=TRUE)
+
+# Cantidad de genes con un valor de p ajustado menor a 0.05
+plotMA(res_hr, ylim=c(-10,10))
+plotCounts(dds_hr, gene=which.min(res_hr$padj), intgroup="phenotype")
+plotDispEsts( dds_hr, ylim = c(1e-5, 1e1) )
+hist( res_hr$pvalue, breaks=20, col="grey" )
+
+#Transformación de los datos obtenidos 
+rld_hr <- rlog(dds_hr)
+head( assay(rld_hr) )
+
+# Visualización de los datos transformados
+par( mfrow = c( 1, 2 ) )
+plot( log2( 1+counts(dds_hr, normalized=TRUE)[, 1:2] ), col="#00000020", pch=20, cex=0.3 )
+plot( assay(rld)[, 1:2], col="#00000020", pch=20, cex=0.3 )
+sampleDists <- dist( t( assay(rld_hr) ) )
+sampleDistMatrix <- as.matrix( sampleDists )
+rownames(sampleDistMatrix) <-  rld_hr$Tissue
+colnames(sampleDistMatrix) <- rld_hr$phenotype
+
+# heatmaps con gplots y PCA
+library( "gplots" )
+library( "RColorBrewer" )
+colours = colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+heatmap.2( sampleDistMatrix, trace="none", col=colours)
+ramp <- 1:3/3
+cols <- c(rgb(ramp, 0, 0),rgb(0, ramp, 0),rgb(0, 0, ramp))
+print( plotPCA( rld_hr, intgroup = "Tissue"), col=cols )
+
+
+library( "genefilter" )
+topVarGenes <- head( order( rowVars( assay(rld_hr) ), decreasing=TRUE ), 6066 )
+heatmap.2( assay(rld_hr)[ topVarGenes, ], scale="row",
+trace="none", dendrogram="column", cexRow = 0.1, cexCol = 0.5,
+col = colorRampPalette( rev(brewer.pal(9, "RdBu")) )(255))
+
+library("pheatmap")
+select <- order(rowMeans(counts(dds_hr,normalized=TRUE)),decreasing=TRUE)[1:10000]
+df <- as.data.frame(colData(dds_hr)[,c("phenotype","Tissue")])
+pheatmap(assay(rld_hr)[select,], cluster_rows=FALSE, show_rownames=FALSE,
+         cluster_cols=FALSE, annotation_col=df)
+
+# Reporte de resultados
+biocLite("DEGreport")
+library(DEGreport)
+resreport <- degResults(dds = dds_hr, name = "test", org = NULL,
+                        do_go = FALSE, group = "phenotype", xs="Tissue",  path_results = ".")
+
+# Tabla de reporte 
+write.csv(as.data.frame(resreport$table), file="degResults_HojaRaiz.csv")
+
+# Agrupación de DEGs en cada uno de los niveles de la variable fenotipo
+library(DEGreport) 
+ma <- assay(rlog(dds_hr))[row.names(resOrdered)[1:6066],]
+des <- data.frame(row.names=colnames(ma), group=as.factor(ddsTxi_hr$phenotype))
+results_hr <- degPatterns(ma, des, minc = 30, summarize = "group", time = "group", col = "group", reduce = FALSE, cutoff = 0.7, scale = TRUE, plot = TRUE, fixy = NULL)
+
+# Listado de DEGs por fenotipo utilizando la función degPatterns
+write.csv(as.data.frame(results_hr$df), file="degpatterns_HojaRaiz_ok.csv")
+

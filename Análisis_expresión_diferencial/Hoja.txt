@@ -7,11 +7,6 @@ source("https://bioconductor.org/biocLite.R")
 biocLite()
 biocValid()
 
-# Paquetes utilizados 
-library(DESeq2)
-biocLite("tximport")
-library("readr")
-
 # Directorio de trabajo
 dir <- "D:/TATIANA 2018/UOC/TFM/Kallisto/kallisto_output_hoja/"
 
